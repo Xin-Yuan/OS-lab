@@ -1,0 +1,81 @@
+diff --git a/sysproc.c b/sysproc.c
+index 0686d29..74376ef 100644
+--- a/sysproc.c
++++ b/sysproc.c
+@@ -51,8 +51,10 @@ sys_sbrk(void)
+   if(argint(0, &n) < 0)
+     return -1;
+   addr = myproc()->sz;
+-  if(growproc(n) < 0)
+-    return -1;
++  myproc()->sz += n;
++  //disable the allocate memory function
++  //if(growproc(n) < 0)
++   // return -1;
+   return addr;
+ }
+ 
+diff --git a/trap.c b/trap.c
+index 41c66eb..1c97e8f 100644
+--- a/trap.c
++++ b/trap.c
+@@ -13,7 +13,7 @@ struct gatedesc idt[256];
+ extern uint vectors[];  // in vectors.S: array of 256 entry pointers
+ struct spinlock tickslock;
+ uint ticks;
+-
++int mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm);
+ void
+ tvinit(void)
+ {
+@@ -45,11 +45,11 @@ trap(struct trapframe *tf)
+       exit();
+     return;
+   }
+-
++ 
+   switch(tf->trapno){
+   case T_IRQ0 + IRQ_TIMER:
+     if(cpuid() == 0){
+-      acquire(&tickslock);
++     acquire(&tickslock);
+       ticks++;
+       wakeup(&ticks);
+       release(&tickslock);
+@@ -87,6 +87,23 @@ trap(struct trapframe *tf)
+       panic("trap");
+     }
+     // In user space, assume process misbehaved.
++    // do something here.
++//Lazy page allocation
++  if(tf->trapno == T_PGFLT) {
++    // alloc PA
++    char * mem;
++    mem = kalloc();
++    if(mem == 0){
++      cprintf("alloc lazy page, out of memory\n");
++      return ;
++    }
++    memset(mem, 0, PGSIZE);
++
++    // create PTE and map page to PGDIR
++    uint a = PGROUNDDOWN(rcr2());
++    mappages(myproc()->pgdir, (char*) a, PGSIZE, V2P(mem), PTE_W | PTE_U);
++    return ;
++}    
+     cprintf("pid %d %s: trap %d err %d on cpu %d "
+             "eip 0x%x addr 0x%x--kill proc\n",
+             myproc()->pid, myproc()->name, tf->trapno,
+diff --git a/vm.c b/vm.c
+index 3f71b6a..f623aa3 100644
+--- a/vm.c
++++ b/vm.c
+@@ -57,7 +57,7 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
+ // Create PTEs for virtual addresses starting at va that refer to
+ // physical addresses starting at pa. va and size might not
+ // be page-aligned.
+-static int
++int
+ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
+ {
+   char *a, *last;
